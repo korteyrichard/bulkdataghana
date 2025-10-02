@@ -1,0 +1,120 @@
+APP_NAME=bulkdata
+APP_ENV=production
+APP_KEY=base64:jrfs7f0DbhLEKmoad/QLgvwuWXOSSDDeU6MalZE/hK8=
+APP_DEBUG=true
+APP_URL=https://bulkdataghana.com
+FORCE_HTTPS=false
+SESSION_SECURE_COOKIE=false
+APP_TIMEZONE=Africa/Accra
+
+APP_LOCALE=en
+APP_FALLBACK_LOCALE=en
+APP_FAKER_LOCALE=en_US
+
+APP_MAINTENANCE_DRIVER=file
+# APP_MAINTENANCE_STORE=database
+
+PHP_CLI_SERVER_WORKERS=4
+
+BCRYPT_ROUNDS=12
+
+LOG_CHANNEL=stack
+LOG_STACK=single
+LOG_DEPRECATIONS_CHANNEL=null
+LOG_LEVEL=debug
+
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=bulknbbx_bulkdata
+DB_USERNAME=bulknbbx_kortey
+DB_PASSWORD="0213023003Aa@"
+
+SESSION_DRIVER=database
+SESSION_LIFETIME=120
+SESSION_ENCRYPT=false
+SESSION_PATH=/
+SESSION_DOMAIN=null
+
+BROADCAST_CONNECTION=log
+FILESYSTEM_DISK=local
+QUEUE_CONNECTION=database
+
+CACHE_STORE=database
+# CACHE_PREFIX=
+
+MEMCACHED_HOST=127.0.0.1
+
+REDIS_CLIENT=phpredis
+REDIS_HOST=127.0.0.1
+REDIS_PASSWORD=null
+REDIS_PORT=6379
+
+MAIL_MAILER=smtp
+MAIL_SCHEME=null
+MAIL_HOST=superdatagh.com
+MAIL_PORT=465
+MAIL_USERNAME=admin@superdatagh.com
+MAIL_PASSWORD=0213023003Aa@
+MAIL_ENCRYPTION=ssl
+MAIL_FROM_ADDRESS="admin@superdatagh.com"
+MAIL_FROM_NAME="${APP_NAME}"
+
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_DEFAULT_REGION=us-east-1
+AWS_BUCKET=
+AWS_USE_PATH_STYLE_ENDPOINT=false
+
+VITE_APP_NAME="${APP_NAME}"
+
+
+# paystack credentials
+PAYSTACK_PUBLIC_KEY=pk_test_ed9503663a4fa51515f37ecc1241a75e4696c4ba
+PAYSTACK_SECRET_KEY=sk_test_2cc209b2f7d532933247b8c6afc337344f39ffad
+PAYSTACK_API_BASE_URL=https://api.paystack.co
+PAYSTACK_MERCHANT_EMAIL=korteyrichard01@gmail.com
+
+# Bulkclix SMS credentials
+BULKCLIX_API_KEY=WD7E5YIhudXzO7GxFgyQdFaNB0BCIfKi0zVCXOTO
+BULKCLIX_SENDER_ID=3005ee3c-d2b9-4d2d-8b0c-d4c338f5500c
+
+#order pusher credentials
+ORDER_PUSHER_BASE_URL=https://agent.jaybartservices.com/api/v1
+ORDER_PUSHER_API_KEY=
+
+
+
+# telecel order pusher credentials
+CODE_CRAFTER_BASE_URL=https://api.codecraftnetwork.com/api/initiate.php
+CODE_CRAFTER_API_KEY=
+
+
+#moolre sms details
+MOOLRE_API_KEY=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ2YXNpZCI6MTc2OSwiZXhwIjoxOTI0OTkxOTk5fQ.SIv26mdlwM5w_ZZHbPT-q5a8E5rEBTldU7HzgHq2Y0E
+
+
+
+
+<?php
+
+use Illuminate\Foundation\Application;
+use Illuminate\Http\Request;
+
+define('LARAVEL_START', microtime(true));
+
+// Determine if the application is in maintenance mode...
+if (file_exists($maintenance = __DIR__.'/../bulkdata/storage/framework/maintenance.php')) {
+    require $maintenance;
+}
+
+// Register the Composer autoloader...
+require __DIR__.'/../bulkdata/vendor/autoload.php';
+
+// Bootstrap Laravel and handle the request...
+/** @var Application $app */
+$app = require_once __DIR__.'/../bulkdata/bootstrap/app.php';
+
+$app->handleRequest(Request::capture());
+
+
