@@ -1,9 +1,11 @@
 import { useEffect, FormEventHandler, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Head, Link, useForm } from '@inertiajs/react';
+import { Head, Link, useForm, usePage } from '@inertiajs/react';
 
 export default function Register() {
+    const { referral_code } = usePage<{ referral_code?: string }>().props;
+
     const { data, setData, post, processing, errors, reset } = useForm({
         name: '',
         email: '',
@@ -11,6 +13,7 @@ export default function Register() {
         business_name: '',
         password: '',
         password_confirmation: '',
+        referral_code: referral_code ?? '',
     });
     const [showPassword, setShowPassword] = useState(false);
     const [showPasswordConfirmation, setShowPasswordConfirmation] = useState(false);
@@ -146,6 +149,9 @@ export default function Register() {
                         >
                             Create Account →
                         </Button>
+                        {referral_code && (
+                            <p className="text-xs text-center text-green-600">✓ Referral code applied: {referral_code}</p>
+                        )}
                     </form>
                     <div className="mt-6 text-center space-y-2">
                         <div className="text-sm text-gray-600">

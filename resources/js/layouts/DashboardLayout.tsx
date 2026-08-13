@@ -41,9 +41,11 @@ export default function DashboardLayout({ user, header, children }: DashboardLay
     const navigation: NavigationItem[] = [
         { name: 'Dashboard', href: route('dashboard'), icon: 'LayoutDashboard', current: route().current('dashboard') },
         { name: 'Orders', href: route('dashboard.orders'), icon: 'Package', current: route().current('dashboard.orders') },
+        { name: 'My Shop', href: route('shop.dashboard'), icon: 'Store', current: route().current('shop.*') },
         { name: 'Afa', href: route('dashboard.afa'), icon: 'Receipt', current: route().current('dashboard.afa') },
         { name: 'Transactions', href: route('dashboard.transactions'), icon: 'Receipt', current: route().current('dashboard.transactions') },
         { name: 'Wallet', href: route('dashboard.wallet'), icon: 'Wallet', current: route().current('dashboard.wallet') },
+        { name: 'Result Checker', href: route('dashboard.result-checker'), icon: 'ClipboardList', current: route().current('dashboard.result-checker') },
         { name: 'community', href: route('dashboard.joinUs'), icon: 'Contact', current: route().current('dashboard.joinUs') },
         ...(user.role === 'agent' || user.role === 'dealer' || user.role === 'admin' ? [{ name: 'API Docs', href: route('dashboard.api-docs'), icon: 'Code' as IconName, current: route().current('dashboard.api-docs') }] : []),
         { name: 'Settings', href: route('profile.edit'), icon: 'Settings', current: route().current('profile.edit') || route().current('password.edit') || route().current('appearance') },

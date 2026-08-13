@@ -60,6 +60,8 @@ export interface Transaction {
     type: 'wallet_topup' | 'order_payment' | 'agent_fee' | 'refund';
     description: string;
     reference: string | null;
+    balance_before: number | null;
+    balance_after: number | null;
     created_at: string;
     updated_at: string;
     order?: any;

@@ -34,7 +34,7 @@ class AFAController extends Controller
         $request->validate([
             'afa_product_id' => 'required|exists:afa_products,id',
             'full_name' => 'required|string|max:255',
-            'email' => 'required|email|max:255',
+            'ghana_card_number' => 'required|string|max:20',
             'phone' => 'required|string|max:20',
             'dob' => 'required|date',
             'occupation' => 'required|string|max:255',
@@ -54,9 +54,9 @@ class AFAController extends Controller
         DB::transaction(function() use ($request, $afaProduct) {
             AFAOrders::create([
                 'user_id' => auth()->id(),
-                'Afa_product_id' => $request->afa_product_id,
+                'afa_product_id' => $request->afa_product_id,
                 'full_name' => $request->full_name,
-                'email' => $request->email,
+                'ghana_card_number' => $request->ghana_card_number,
                 'phone' => $request->phone,
                 'dob' => $request->dob,
                 'occupation' => $request->occupation,

@@ -44,4 +44,16 @@ return [
         'api_key' => env('MOOLRE_API_KEY'),
     ],
 
+    'etopup' => [
+        'api_key' => env('ETOPUP_API_KEY'),
+        'api_secret' => env('ETOPUP_API_SECRET'),
+    ],
+
+    'unibundlegh' => [
+        'base_url'       => env('UNIBUNDLEGH_BASE_URL', 'https://unibundlegh.com/api/v1'),
+        'signature_base' => env('UNIBUNDLEGH_SIGNATURE_BASE', '/unibundlegh-api/v1'),
+        'api_key'        => env('UNIBUNDLEGH_API_KEY'),
+        'api_secret'     => env('UNIBUNDLEGH_API_SECRET'),
+    ],
+
 ];

@@ -7,6 +7,8 @@ use App\Models\User;
 use App\Models\Product;
 use App\Models\ProductVariant;
 use App\Models\Order;
+use App\Models\Shop;
+use App\Models\ShopOrder;
 use App\Models\Transaction;
 use App\Models\Setting;
 use Illuminate\Http\Request;
@@ -21,58 +23,21 @@ class AdminDashboardController extends Controller
      */
     public function index()
     {
-        $users = User::all();
-        $products = Product::with('variants')->get();
-        $orders = Order::with(['products' => function($query) {
-            $query->withPivot('quantity', 'price', 'beneficiary_number', 'product_variant_id');
-        }])->get();
-        
-        // Transform orders to include variant information
-        $orders = $orders->map(function($order) {
-            $order->products = $order->products->map(function($product) {
-                if ($product->pivot->product_variant_id) {
-                    $variant = \App\Models\ProductVariant::find($product->pivot->product_variant_id);
-                    if ($variant && isset($variant->variant_attributes['size'])) {
-                        $product->size = strtoupper($variant->variant_attributes['size']);
-                    }
-                }
-                return $product;
-            });
-            return $order;
-        });
-        $transactions = Transaction::all();
-
-        $today = now()->today();
-        $todayUsers = User::whereDate('created_at', $today)->get();
-        $todayOrders = Order::with(['products' => function($query) {
-            $query->withPivot('quantity', 'price', 'beneficiary_number', 'product_variant_id');
-        }])->whereDate('created_at', $today)->get();
-        
-        // Transform today's orders to include variant information
-        $todayOrders = $todayOrders->map(function($order) {
-            $order->products = $order->products->map(function($product) {
-                if ($product->pivot->product_variant_id) {
-                    $variant = \App\Models\ProductVariant::find($product->pivot->product_variant_id);
-                    if ($variant && isset($variant->variant_attributes['size'])) {
-                        $product->size = strtoupper($variant->variant_attributes['size']);
-                    }
-                }
-                return $product;
-            });
-            return $order;
-        });
-        $todayTransactions = Transaction::whereDate('created_at', $today)->get();
+        $today = today();
 
         return Inertia::render('Admin/Dashboard', [
-            'users' => $users,
-            'products' => $products,
-            'orders' => $orders,
-            'transactions' => $transactions,
-            'todayUsers' => $todayUsers,
-            'todayOrders' => $todayOrders,
-            'todayTransactions' => $todayTransactions,
+            'users' => User::count(),
+            'products' => Product::count(),
+            'orders' => Order::count() + ShopOrder::where('payment_status', 'paid')->count(),
+            'transactions' => Transaction::count(),
+            'todayUsers' => User::whereDate('created_at', $today)->count(),
+            'todayOrders' => Order::whereDate('created_at', $today)->count()
+                + ShopOrder::where('payment_status', 'paid')->whereDate('created_at', $today)->count(),
+            'todayTransactions' => Transaction::whereDate('created_at', $today)->count(),
             'jaybartOrderPusherEnabled' => (bool) Setting::get('jaybart_order_pusher_enabled', 1),
             'codecraftOrderPusherEnabled' => (bool) Setting::get('codecraft_order_pusher_enabled', 1),
+            'etopupOrderPusherEnabled' => (bool) Setting::get('etopup_order_pusher_enabled', 1),
+            'unibundleghOrderPusherEnabled' => (bool) Setting::get('unibundlegh_order_pusher_enabled', 0),
         ]);
     }
 
@@ -156,56 +121,240 @@ class AdminDashboardController extends Controller
      */
     public function orders(Request $request)
     {
-        $orders = Order::with(['products' => function($query) {
-            $query->withPivot('quantity', 'price', 'beneficiary_number', 'product_variant_id');
-        }, 'user'])->latest();
+        $perPage = 50;
+        $page    = (int) $request->input('page', 1);
 
-        if ($request->has('network') && $request->input('network') !== '') {
-            $orders->where('network', 'like', '%' . $request->input('network') . '%');
-        }
+        // --- Direct orders ---
+        $ordersQuery = Order::with([
+            'user:id,name,email',
+            'products' => fn($q) => $q->withPivot('quantity', 'price', 'beneficiary_number', 'product_variant_id')
+                                      ->with(['variants' => fn($vq) => $vq->select('id', 'product_id', 'variant_attributes')]),
+        ])->latest();
 
-        if ($request->has('status') && $request->input('status') !== '') {
-            $orders->where('status', $request->input('status'));
-        }
+        if ($request->filled('network'))            $ordersQuery->where('network', 'like', '%'.$request->network.'%');
+        if ($request->filled('status'))             $ordersQuery->where('status', $request->status);
+        if ($request->filled('order_id'))           $ordersQuery->where('id', $request->order_id);
+        if ($request->filled('beneficiary_number')) $ordersQuery->where('beneficiary_number', 'like', '%'.$request->beneficiary_number.'%');
+        if ($request->filled('email'))              $ordersQuery->whereHas('user', fn($q) => $q->where('email', 'like', '%'.$request->email.'%'));
+        if ($request->filled('username'))           $ordersQuery->whereHas('user', fn($q) => $q->where('name', 'like', '%'.$request->username.'%'));
+        if ($request->filled('date'))               $ordersQuery->whereDate('created_at', $request->date);
 
-        // Search by order ID
-        if ($request->has('order_id') && $request->input('order_id') !== '') {
-            $orders->where('id', 'like', '%' . $request->input('order_id') . '%');
-        }
+        // --- Shop orders ---
+        $shopOrdersQuery = ShopOrder::with(['items.shopProduct.variant.product', 'shop.user'])
+            ->where('payment_status', 'paid')
+            ->latest();
 
-        // Search by beneficiary number
-        if ($request->has('beneficiary_number') && $request->input('beneficiary_number') !== '') {
-            $orders->whereHas('products', function($productQuery) use ($request) {
-                $productQuery->where('order_product.beneficiary_number', 'like', '%' . $request->input('beneficiary_number') . '%');
-            });
-        }
+        if ($request->filled('network'))            $shopOrdersQuery->whereHas('items.shopProduct.variant.product', fn($q) => $q->where('network', 'like', '%'.$request->network.'%'));
+        if ($request->filled('status'))             $shopOrdersQuery->where('fulfillment_status', $request->status);
+        if ($request->filled('order_id'))           $shopOrdersQuery->where('id', $request->order_id);
+        if ($request->filled('beneficiary_number')) $shopOrdersQuery->whereHas('items', fn($q) => $q->where('beneficiary_number', 'like', '%'.$request->beneficiary_number.'%'));
+        if ($request->filled('email'))              $shopOrdersQuery->where('customer_email', 'like', '%'.$request->email.'%');
+        if ($request->filled('username'))           $shopOrdersQuery->whereHas('shop.user', fn($q) => $q->where('name', 'like', '%'.$request->username.'%'));
+        if ($request->filled('date'))               $shopOrdersQuery->whereDate('created_at', $request->date);
 
-        $paginatedOrders = $orders->paginate(50);
-        
-        // Transform orders to include variant information
-        $paginatedOrders->getCollection()->transform(function($order) {
-            $order->products = $order->products->map(function($product) {
-                if ($product->pivot->product_variant_id) {
-                    $variant = \App\Models\ProductVariant::find($product->pivot->product_variant_id);
+        // Count totals for pagination
+        $directTotal = $ordersQuery->count();
+        $shopTotal   = $shopOrdersQuery->count();
+        $total       = $directTotal + $shopTotal;
+
+        // Fetch only the IDs needed for this page from a merged, sorted ID list.
+        // We do this by fetching both sets with only id+created_at, merging, sorting, slicing.
+        $directIds = (clone $ordersQuery)->select('id', 'created_at', DB::raw("'direct' as source"))->get();
+        $shopIds   = (clone $shopOrdersQuery)->select('id', 'created_at', DB::raw("'shop' as source"))->get();
+
+        $pageIds = $directIds->concat($shopIds)
+            ->sortByDesc('created_at')
+            ->values()
+            ->slice(($page - 1) * $perPage, $perPage);
+
+        $directPageIds = $pageIds->where('source', 'direct')->pluck('id')->all();
+        $shopPageIds   = $pageIds->where('source', 'shop')->pluck('id')->all();
+
+        // Fetch full records only for this page's IDs
+        $directOrders = !empty($directPageIds)
+            ? Order::with([
+                'user:id,name,email',
+                'products' => fn($q) => $q->withPivot('quantity', 'price', 'beneficiary_number', 'product_variant_id')
+                                          ->with(['variants' => fn($vq) => $vq->select('id', 'product_id', 'variant_attributes')]),
+            ])->whereIn('id', $directPageIds)->get()->keyBy('id')
+            : collect();
+
+        $shopOrders = !empty($shopPageIds)
+            ? ShopOrder::with(['items.shopProduct.variant.product', 'shop.user'])
+                ->whereIn('id', $shopPageIds)->get()->keyBy('id')
+            : collect();
+
+        $pageItems = $pageIds->map(function ($row) use ($directOrders, $shopOrders) {
+            if ($row->source === 'shop') {
+                $so = $shopOrders->get($row->id);
+                if (!$so) return null;
+                return [
+                    'id'                 => $so->id,
+                    'source'             => 'shop',
+                    'reference'          => $so->reference,
+                    'customer_email'     => $so->customer_email,
+                    'total'              => (float) $so->total_amount,
+                    'status'             => $so->fulfillment_status ?? 'pending',
+                    'network'            => optional($so->items->first()?->shopProduct?->variant?->product)->network,
+                    'beneficiary_number' => $so->items->first()?->beneficiary_number,
+                    'api_status'         => null,
+                    'created_at'         => $so->created_at,
+                    'user'               => $so->shop?->user
+                        ? ['id' => $so->shop->user->id, 'name' => $so->shop->name, 'email' => $so->customer_email]
+                        : null,
+                    'products'           => $so->items->map(fn($item) => [
+                        'id'    => $item->id,
+                        'name'  => $item->shopProduct?->variant?->full_name ?? 'Data Bundle',
+                        'price' => (float) $item->unit_price,
+                        'size'  => null,
+                        'pivot' => ['quantity' => 1, 'price' => (float) $item->unit_price, 'beneficiary_number' => $item->beneficiary_number],
+                    ])->values()->all(),
+                ];
+            }
+
+            $order = $directOrders->get($row->id);
+            if (!$order) return null;
+            $order->products->transform(function ($product) {
+                $variantId = $product->pivot->product_variant_id;
+                if ($variantId) {
+                    $variant = $product->variants->firstWhere('id', $variantId);
                     if ($variant && isset($variant->variant_attributes['size'])) {
                         $product->size = strtoupper($variant->variant_attributes['size']);
                     }
                 }
                 return $product;
             });
-            return $order;
-        });
+            return [
+                'id'                 => $order->id,
+                'source'             => 'direct',
+                'reference'          => null,
+                'customer_email'     => null,
+                'total'              => $order->total,
+                'status'             => $order->status,
+                'network'            => $order->network,
+                'beneficiary_number' => $order->beneficiary_number,
+                'api_status'         => $order->api_status ?? null,
+                'created_at'         => $order->created_at,
+                'user'               => $order->user
+                    ? ['id' => $order->user->id, 'name' => $order->user->name, 'email' => $order->user->email]
+                    : null,
+                'products'           => $order->products->map(fn($p) => [
+                    'id'    => $p->id,
+                    'name'  => $p->name,
+                    'price' => $p->price,
+                    'size'  => $p->size ?? null,
+                    'pivot' => [
+                        'quantity'           => $p->pivot->quantity,
+                        'price'              => $p->pivot->price,
+                        'beneficiary_number' => $p->pivot->beneficiary_number,
+                    ],
+                ])->values()->all(),
+            ];
+        })->filter()->values();
 
-        $dailyTotalSales = Order::whereDate('created_at', today())->sum('total');
+        $paginated = new \Illuminate\Pagination\LengthAwarePaginator(
+            $pageItems,
+            $total,
+            $perPage,
+            $page,
+            ['path' => $request->url(), 'query' => $request->query()]
+        );
+
+        $dailyTotalSales = Order::whereDate('created_at', today())->sum('total')
+            + ShopOrder::where('payment_status', 'paid')->whereDate('created_at', today())->sum('total_amount');
 
         return Inertia::render('Admin/Orders', [
-            'orders' => $paginatedOrders,
-            'filterNetwork' => $request->input('network', ''),
-            'filterStatus' => $request->input('status', ''),
-            'searchOrderId' => $request->input('order_id', ''),
+            'orders'                  => $paginated,
+            'filterNetwork'           => $request->input('network', ''),
+            'filterStatus'            => $request->input('status', ''),
+            'searchOrderId'           => $request->input('order_id', ''),
             'searchBeneficiaryNumber' => $request->input('beneficiary_number', ''),
-            'dailyTotalSales' => $dailyTotalSales,
+            'filterEmail'             => $request->input('email', ''),
+            'filterUsername'          => $request->input('username', ''),
+            'filterDate'              => $request->input('date', ''),
+            'dailyTotalSales'         => $dailyTotalSales,
         ]);
+    }
+
+    public function shops()
+    {
+        $shops = Shop::with('user')
+            ->withCount('shopProducts')
+            ->withCount(['orders as paid_orders_count' => fn($q) => $q->where('payment_status', 'paid')])
+            ->withSum(['orders as total_revenue' => fn($q) => $q->where('payment_status', 'paid')], 'total_amount')
+            ->latest()
+            ->get()
+            ->map(function($shop) {
+                $withdrawn = $shop->user
+                    ? \App\Models\ShopWithdrawal::where('user_id', $shop->user->id)
+                        ->where('status', 'approved')
+                        ->sum('amount')
+                    : 0;
+
+                return [
+                    'id'               => $shop->id,
+                    'name'             => $shop->name,
+                    'slug'             => $shop->slug,
+                    'is_active'        => $shop->is_active,
+                    'primary_color'    => $shop->primary_color,
+                    'products_count'   => $shop->shop_products_count,
+                    'orders_count'     => $shop->paid_orders_count,
+                    'total_revenue'    => (float) ($shop->total_revenue ?? 0),
+                    'available_balance'=> (float) ($shop->user?->commission_balance ?? 0),
+                    'total_withdrawn'  => (float) $withdrawn,
+                    'created_at'       => $shop->created_at,
+                    'owner'            => $shop->user ? ['id' => $shop->user->id, 'name' => $shop->user->name, 'email' => $shop->user->email] : null,
+                ];
+            });
+
+        return Inertia::render('Admin/Shops', ['shops' => $shops]);
+    }
+
+    public function toggleShop(Shop $shop)
+    {
+        $shop->update(['is_active' => !$shop->is_active]);
+        return redirect()->back()->with('success', 'Shop status updated.');
+    }
+
+    public function updateShopOrderStatus(Request $request, ShopOrder $shopOrder)
+    {
+        $request->validate([
+            'status' => 'required|string|in:pending,processing,completed,cancelled',
+        ]);
+
+        $oldStatus = $shopOrder->fulfillment_status;
+        $shopOrder->load('shop.user');
+
+        DB::transaction(function () use ($shopOrder, $request, $oldStatus) {
+            $shopOrder->update(['fulfillment_status' => $request->status]);
+
+            if ($request->status === 'cancelled' && $oldStatus !== 'cancelled') {
+                $commissionLog = \App\Models\CommissionLog::where('source_type', ShopOrder::class)
+                    ->where('source_id', $shopOrder->id)
+                    ->first();
+
+                $shopOwner = $shopOrder->shop?->user
+                    ? \App\Models\User::where('id', $shopOrder->shop->user->id)->lockForUpdate()->first()
+                    : null;
+
+                if ($shopOwner) {
+                    // Refund the full total amount back to shop owner's wallet
+                    $refund = (float) $shopOrder->total_amount;
+
+                    if ($refund > 0) {
+                        $shopOwner->increment('wallet_balance', $refund);
+                    }
+
+                    // Reverse commission balance
+                    if ($commissionLog) {
+                        $shopOwner->decrement('commission_balance', $commissionLog->amount);
+                        $commissionLog->delete();
+                    }
+                }
+            }
+        });
+
+        return redirect()->back()->with('success', 'Shop order status updated successfully.');
     }
 
     /**
@@ -233,21 +382,33 @@ class AdminDashboardController extends Controller
         if ($request->status === 'cancelled' && $oldStatus !== 'cancelled') {
             $user = $order->user;
             $refundAmount = $order->total;
-            
-            // Add refund to user's wallet
+            $balanceBefore = $user->wallet_balance;
             $user->increment('wallet_balance', $refundAmount);
             
-            // Create refund transaction record
             Transaction::create([
-                'user_id' => $user->id,
-                'order_id' => $order->id,
-                'amount' => $refundAmount,
-                'status' => 'completed',
-                'type' => 'refund',
-                'description' => "Refund for cancelled order #{$order->id}",
+                'user_id'        => $user->id,
+                'order_id'       => $order->id,
+                'amount'         => $refundAmount,
+                'status'         => 'completed',
+                'type'           => 'refund',
+                'description'    => "Refund for cancelled order #{$order->id}",
+                'balance_before' => $balanceBefore,
+                'balance_after'  => $balanceBefore + $refundAmount,
             ]);
+
+            // Reverse shop commission if this order was placed via a shop
+            $commissionLog = \App\Models\CommissionLog::where('source_type', Order::class)
+                ->where('source_id', $order->id)
+                ->first();
+
+            if ($commissionLog) {
+                $shopOwner = \App\Models\User::where('id', $commissionLog->user_id)->lockForUpdate()->first();
+                if ($shopOwner) {
+                    $shopOwner->decrement('commission_balance', $commissionLog->amount);
+                }
+                $commissionLog->delete();
+            }
             
-            // Send SMS notification for refund
             if ($user->phone) {
                 $smsService = new MoolreSmsService();
                 $message = "Your order #{$order->id} has been cancelled and GHS " . number_format($refundAmount, 2) . " has been refunded to your wallet.";
@@ -256,10 +417,32 @@ class AdminDashboardController extends Controller
         }
 
         // Send SMS if status changed to completed
-        if ($request->status === 'completed' && $oldStatus !== 'completed' && $order->user->phone) {
+        if ($request->status === 'completed' && $oldStatus !== 'completed') {
             $smsService = new MoolreSmsService();
-            $message = "Your order #{$order->id} for {$order->products->first()->name} to {$order->beneficiary_number} has been completed. Total: GHS " . number_format($order->total, 2);
-            $smsService->sendSms($order->user->phone, $message);
+            
+            foreach ($order->products as $product) {
+                $size = 'N/A';
+                if ($product->pivot->product_variant_id) {
+                    $variant = \App\Models\ProductVariant::find($product->pivot->product_variant_id);
+                    if ($variant && isset($variant->variant_attributes['size'])) {
+                        $size = strtoupper($variant->variant_attributes['size']);
+                    }
+                }
+                
+                $beneficiaryNumber = $product->pivot->beneficiary_number;
+                
+                // Send SMS to beneficiary
+                if ($beneficiaryNumber) {
+                    $beneficiaryMessage = "Your Account has been credited with {$size}";
+                    $smsService->sendSms($beneficiaryNumber, $beneficiaryMessage);
+                }
+                
+                // Send SMS to user
+                if ($order->user->phone) {
+                    $userMessage = "{$size} has been sent to {$beneficiaryNumber}";
+                    $smsService->sendSms($order->user->phone, $userMessage);
+                }
+            }
         }
 
         return redirect()->back()->with('success', 'Order status updated successfully.');
@@ -271,56 +454,105 @@ class AdminDashboardController extends Controller
     public function bulkUpdateOrderStatus(Request $request)
     {
         $request->validate([
-            'order_ids' => 'required|array|min:1',
-            'order_ids.*' => 'exists:orders,id',
-            'status' => 'required|string|in:pending,processing,completed,cancelled',
+            'orders'         => 'required|array|min:1',
+            'orders.*.id'    => 'required|integer',
+            'orders.*.source'=> 'required|string|in:direct,shop',
+            'status'         => 'required|string|in:pending,processing,completed,cancelled',
         ]);
 
-        // Get orders before update for SMS notifications
-        $orders = Order::with('user')->whereIn('id', $request->order_ids)->get();
-        
-        $updatedCount = Order::whereIn('id', $request->order_ids)
-            ->update(['status' => $request->status]);
+        $directIds = [];
+        $shopIds   = [];
+        foreach ($request->orders as $entry) {
+            if ($entry['source'] === 'shop') {
+                $shopIds[] = $entry['id'];
+            } else {
+                $directIds[] = $entry['id'];
+            }
+        }
+
+        // --- Direct orders ---
+        $orders = Order::with('user', 'products')->whereIn('id', $directIds)->get();
+        $previouslyNonCancelled = $orders->where('status', '!=', 'cancelled');
+        $previouslyNonCompleted = $orders->where('status', '!=', 'completed');
+
+        $updatedCount = 0;
+        if (!empty($directIds)) {
+            $updatedCount += Order::whereIn('id', $directIds)->update(['status' => $request->status]);
+        }
 
         // Handle automatic refunds when orders are cancelled
         if ($request->status === 'cancelled') {
             $smsService = new MoolreSmsService();
-            foreach ($orders as $order) {
-                if ($order->status !== 'cancelled') {
-                    $user = $order->user;
+            foreach ($previouslyNonCancelled as $order) {
+                $user = $order->user;
                     $refundAmount = $order->total;
-                    
-                    // Add refund to user's wallet
+                    $balanceBefore = $user->wallet_balance;
                     $user->increment('wallet_balance', $refundAmount);
-                    
-                    // Create refund transaction record
+
                     Transaction::create([
-                        'user_id' => $user->id,
-                        'order_id' => $order->id,
-                        'amount' => $refundAmount,
-                        'status' => 'completed',
-                        'type' => 'refund',
-                        'description' => "Refund for cancelled order #{$order->id}",
+                        'user_id'        => $user->id,
+                        'order_id'       => $order->id,
+                        'amount'         => $refundAmount,
+                        'status'         => 'completed',
+                        'type'           => 'refund',
+                        'description'    => "Refund for cancelled order #{$order->id}",
+                        'balance_before' => $balanceBefore,
+                        'balance_after'  => $balanceBefore + $refundAmount,
                     ]);
+
+                    // Reverse shop commission if this order was placed via a shop
+                    $commissionLog = \App\Models\CommissionLog::where('source_type', Order::class)
+                        ->where('source_id', $order->id)
+                        ->first();
+
+                    if ($commissionLog) {
+                        $shopOwner = \App\Models\User::where('id', $commissionLog->user_id)->lockForUpdate()->first();
+                        if ($shopOwner) {
+                            $shopOwner->decrement('commission_balance', $commissionLog->amount);
+                        }
+                        $commissionLog->delete();
+                    }
                     
-                    // Send SMS notification for refund
                     if ($user->phone) {
                         $message = "Your order #{$order->id} has been cancelled and GHS " . number_format($refundAmount, 2) . " has been refunded to your wallet.";
                         $smsService->sendSms($user->phone, $message);
                     }
-                }
             }
         }
 
         // Send SMS notifications if status changed to completed
         if ($request->status === 'completed') {
             $smsService = new MoolreSmsService();
-            foreach ($orders as $order) {
-                if ($order->status !== 'completed' && $order->user->phone) {
-                    $message = "Your order #{$order->id} has been completed. Total: GHS " . number_format($order->total, 2);
-                    $smsService->sendSms($order->user->phone, $message);
+            foreach ($previouslyNonCompleted as $order) {
+                foreach ($order->products as $product) {
+                        $size = 'N/A';
+                        if ($product->pivot->product_variant_id) {
+                            $variant = \App\Models\ProductVariant::find($product->pivot->product_variant_id);
+                            if ($variant && isset($variant->variant_attributes['size'])) {
+                                $size = strtoupper($variant->variant_attributes['size']);
+                            }
+                        }
+                        
+                        $beneficiaryNumber = $product->pivot->beneficiary_number;
+                        
+                        // Send SMS to beneficiary
+                        if ($beneficiaryNumber) {
+                            $beneficiaryMessage = "Your Account has been credited with {$size}";
+                            $smsService->sendSms($beneficiaryNumber, $beneficiaryMessage);
+                        }
+                        
+                        // Send SMS to user
+                        if ($order->user->phone) {
+                            $userMessage = "{$size} has been sent to {$beneficiaryNumber}";
+                            $smsService->sendSms($order->user->phone, $userMessage);
+                        }
                 }
             }
+        }
+
+        // --- Shop orders ---
+        if (!empty($shopIds)) {
+            $updatedCount += ShopOrder::whereIn('id', $shopIds)->update(['fulfillment_status' => $request->status]);
         }
 
         return redirect()->back()->with('success', "Updated {$updatedCount} order(s) successfully.");
@@ -338,7 +570,7 @@ class AdminDashboardController extends Controller
         }
 
         return Inertia::render('Admin/Transactions', [
-            'transactions' => $transactions->paginate(10),
+            'transactions' => $transactions->paginate(50),
             'filterType' => $request->input('type', ''),
         ]);
     }
@@ -401,19 +633,23 @@ class AdminDashboardController extends Controller
         ]);
 
         $amount = $request->amount;
+        $balanceBefore = $user->wallet_balance;
         $user->increment('wallet_balance', $amount);
 
         // Create transaction record
         Transaction::create([
-            'user_id' => $user->id,
-            'amount' => $amount,
-            'status' => 'completed',
-            'type' => 'wallet_credit',
-            'description' => "Admin wallet credit - GHS " . number_format($amount, 2),
+            'user_id'        => $user->id,
+            'amount'         => $amount,
+            'status'         => 'completed',
+            'type'           => 'wallet_credit',
+            'description'    => "Admin wallet credit - GHS " . number_format($amount, 2),
+            'balance_before' => $balanceBefore,
+            'balance_after'  => $balanceBefore + $amount,
         ]);
 
         // Send SMS notification
-        $message = "Your wallet has been credited with GHS " . number_format($amount, 2) . ". New balance: GHS " . number_format($user->wallet_balance, 2);
+        $previousBalance = $balanceBefore;
+        $message = "Hello {$user->name}, your wallet has been credited with GHS " . number_format($amount, 2) . " by admin. Your previous balance was GHS " . number_format($previousBalance, 2) . " and your current balance is GHS " . number_format($user->wallet_balance, 2);
         $smsService->sendSms($user->phone, $message);
 
         return redirect()->route('admin.users')->with('success', 'Wallet credited successfully.');
@@ -433,19 +669,23 @@ class AdminDashboardController extends Controller
         }
 
         $amount = $request->amount;
+        $balanceBefore = $user->wallet_balance;
         $user->decrement('wallet_balance', $amount);
 
         // Create transaction record
         Transaction::create([
-            'user_id' => $user->id,
-            'amount' => $amount,
-            'status' => 'completed',
-            'type' => 'wallet_debit',
-            'description' => "Admin wallet debit - GHS " . number_format($amount, 2),
+            'user_id'        => $user->id,
+            'amount'         => $amount,
+            'status'         => 'completed',
+            'type'           => 'wallet_debit',
+            'description'    => "Admin wallet debit - GHS " . number_format($amount, 2),
+            'balance_before' => $balanceBefore,
+            'balance_after'  => $balanceBefore - $amount,
         ]);
 
         // Send SMS notification
-        $message = "Your wallet has been debited with GHS " . number_format($amount, 2) . ". New balance: GHS " . number_format($user->wallet_balance, 2);
+        $previousBalance = $balanceBefore;
+        $message = "Hello {$user->name}, your wallet has been debited with GHS " . number_format($amount, 2) . " by admin. Your previous balance was GHS " . number_format($previousBalance, 2) . " and your current balance is GHS " . number_format($user->wallet_balance, 2);
         $smsService->sendSms($user->phone, $message);
 
         return redirect()->route('admin.users')->with('success', 'Wallet debited successfully.');
@@ -621,7 +861,7 @@ class AdminDashboardController extends Controller
             ->get();
 
         return Inertia::render('Admin/UserTransactions', [
-            'user' => $user,
+            'user'         => $user,
             'transactions' => $transactions,
         ]);
     }
@@ -632,40 +872,76 @@ class AdminDashboardController extends Controller
     public function exportOrders(Request $request)
     {
         $request->validate([
-            'order_ids' => 'required|array|min:1',
-            'order_ids.*' => 'exists:orders,id',
+            'order_ids'   => 'required|array|min:1',
+            'order_ids.*' => 'required|string',
         ]);
 
-        $orders = Order::with(['products' => function($query) {
-            $query->withPivot('quantity', 'beneficiary_number', 'product_variant_id');
-        }])->whereIn('id', $request->order_ids)->get();
+        $directIds = [];
+        $shopIds   = [];
+
+        foreach ($request->order_ids as $key) {
+            if (str_starts_with($key, 'shop_')) {
+                $shopIds[] = (int) substr($key, 5);
+            } else {
+                // handles both "direct_5" and plain "5"
+                $directIds[] = (int) (str_starts_with($key, 'direct_') ? substr($key, 7) : $key);
+            }
+        }
+
+        $directOrders = !empty($directIds)
+            ? Order::with(['products' => fn($q) => $q->withPivot('quantity', 'beneficiary_number', 'product_variant_id')])
+                ->whereIn('id', $directIds)->get()->keyBy('id')
+            : collect();
+
+        $shopOrders = !empty($shopIds)
+            ? ShopOrder::with('items.shopProduct.variant')->whereIn('id', $shopIds)->get()->keyBy('id')
+            : collect();
 
         $filename = 'orders_' . date('Y-m-d_H-i-s') . '.csv';
-        
+
         $headers = [
-            'Content-Type' => 'text/csv',
+            'Content-Type'        => 'text/csv',
             'Content-Disposition' => 'attachment; filename="' . $filename . '"',
         ];
 
-        $callback = function() use ($orders) {
-            $file = fopen('php://output', 'w');
-            fputcsv($file, ['Number', 'Volume']);
-            
-            foreach ($orders as $order) {
+        // Build rows in the original order_ids sequence
+        $rows = collect();
+
+        foreach ($request->order_ids as $key) {
+            if (str_starts_with($key, 'shop_')) {
+                $id = (int) substr($key, 5);
+                $shopOrder = $shopOrders->get($id);
+                if (!$shopOrder) continue;
+                foreach ($shopOrder->items as $item) {
+                    $variant = $item->shopProduct?->variant;
+                    $size = 'N/A';
+                    if ($variant && isset($variant->variant_attributes['size'])) {
+                        $size = preg_replace('/[^0-9.]/', '', $variant->variant_attributes['size']);
+                    }
+                    $rows->push([$item->beneficiary_number ?? 'N/A', $size]);
+                }
+            } else {
+                $id = (int) (str_starts_with($key, 'direct_') ? substr($key, 7) : $key);
+                $order = $directOrders->get($id);
+                if (!$order) continue;
                 foreach ($order->products as $product) {
                     $size = 'N/A';
                     if ($product->pivot->product_variant_id) {
-                        $variant = \App\Models\ProductVariant::find($product->pivot->product_variant_id);
+                        $variant = ProductVariant::find($product->pivot->product_variant_id);
                         if ($variant && isset($variant->variant_attributes['size'])) {
                             $size = preg_replace('/[^0-9.]/', '', $variant->variant_attributes['size']);
                         }
                     }
-                    
-                    fputcsv($file, [
-                        $product->pivot->beneficiary_number ?? 'N/A',
-                        $size
-                    ]);
+                    $rows->push([$product->pivot->beneficiary_number ?? 'N/A', $size]);
                 }
+            }
+        }
+
+        $callback = function () use ($rows) {
+            $file = fopen('php://output', 'w');
+            fputcsv($file, ['Number', 'Volume']);
+            foreach ($rows as $row) {
+                fputcsv($file, $row);
             }
             fclose($file);
         };
@@ -721,5 +997,29 @@ class AdminDashboardController extends Controller
         
         $status = $enabled ? 'enabled' : 'disabled';
         return redirect()->back()->with('success', "CodeCraft order pusher {$status} successfully.");
+    }
+
+    /**
+     * Toggle Etopup order pusher functionality.
+     */
+    public function toggleEtopupOrderPusher(Request $request)
+    {
+        $enabled = $request->input('enabled', false);
+        Setting::set('etopup_order_pusher_enabled', $enabled ? '1' : '0');
+        
+        $status = $enabled ? 'enabled' : 'disabled';
+        return redirect()->back()->with('success', "Etopup order pusher {$status} successfully.");
+    }
+
+    /**
+     * Toggle UniBundleGH order pusher functionality.
+     */
+    public function toggleUniBundleGHOrderPusher(Request $request)
+    {
+        $enabled = $request->input('enabled', false);
+        Setting::set('unibundlegh_order_pusher_enabled', $enabled ? '1' : '0');
+
+        $status = $enabled ? 'enabled' : 'disabled';
+        return redirect()->back()->with('success', "UniBundleGH order pusher {$status} successfully.");
     }
 }

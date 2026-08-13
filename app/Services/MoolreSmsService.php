@@ -14,7 +14,7 @@ class MoolreSmsService
     public function __construct()
     {
         $this->apiKey = config('services.moolre.api_key');
-        $this->senderId = 'BULKDATAGH';
+        $this->senderId = 'BD-Ghana';
     }
 
     public function sendSms(string $phoneNumber, string $message): bool
@@ -25,7 +25,7 @@ class MoolreSmsService
                 'Content-Type' => 'application/json',
             ])->post($this->apiUrl, [
                 'type' => 1,
-                'senderid' => "BULKDATAGH",
+                'senderid' => "BD-Ghana",
                 'messages' => [
                     [
                         'recipient' => $phoneNumber,

@@ -6,8 +6,8 @@ use Illuminate\Support\Facades\Auth;
 
 use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\AFAController;
-
 use App\Http\Controllers\Api\TransactionController;
+use App\Http\Controllers\Api\UniBundleGHController;
 use App\Models\User;
 
 Route::prefix('v1')->group(function () {
@@ -54,6 +54,10 @@ Route::prefix('v1')->group(function () {
         Route::get('/afa/products', [AFAController::class, 'getProducts']);
 
 
+
+        // UNIBUNDLEGH
+        Route::get('/unibundlegh/beneficiaries/check', [UniBundleGHController::class, 'checkBeneficiary']);
+        Route::post('/unibundlegh/orders/create', [UniBundleGHController::class, 'createBulkOrder']);
 
         // TRANSACTIONS
         Route::get('/transactions', [TransactionController::class, 'index']);

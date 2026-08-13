@@ -16,95 +16,104 @@ class CodeCraftOrderPusherService
     public function pushOrderToApi(Order $order)
     {
         Log::info('Processing order for CodeCraft API push', ['order_id' => $order->id]);
-        
+
+        $isEnabled = \App\Models\Setting::get('codecraft_order_pusher_enabled', 1);
+        if (!$isEnabled) {
+            $order->update(['api_status' => 'disabled']);
+            Log::info('CodeCraft order pusher is disabled', ['order_id' => $order->id]);
+            return;
+        }
+
         $items = $order->products()->withPivot('quantity', 'price', 'beneficiary_number', 'product_variant_id')->get();
-        Log::info('Order has items', ['count' => $items->count()]);
+        $userName  = $order->user->name ?? 'Customer';
+        $userPhone = $order->user->phone ?? null;
+
+        $this->processItems($order->id, $items->map(fn($item) => [
+            'beneficiary_number' => $item->pivot->beneficiary_number,
+            'variant_id'         => $item->pivot->product_variant_id,
+            'product_name'       => $item->name,
+        ])->all(), $userName, $userPhone, fn($status, $refId) => $order->update(array_filter(['api_status' => $status, 'reference_id' => $refId])));
+    }
+
+    public function pushShopOrderToApi(\App\Models\ShopOrder $shopOrder): void
+    {
+        Log::info('Processing shop order for CodeCraft API push', ['shop_order_id' => $shopOrder->id]);
+
+        $isEnabled = \App\Models\Setting::get('codecraft_order_pusher_enabled', 1);
+        if (!$isEnabled) {
+            Log::info('CodeCraft order pusher is disabled', ['shop_order_id' => $shopOrder->id]);
+            return;
+        }
+
+        $items = $shopOrder->items()->with('shopProduct.variant.product')->get();
+
+        $this->processItems($shopOrder->id, $items->map(fn($item) => [
+            'beneficiary_number' => $item->beneficiary_number,
+            'variant_id'         => $item->shopProduct?->variant?->id,
+            'product_name'       => $item->shopProduct?->variant?->product?->name ?? '',
+        ])->all(), $shopOrder->customer_name ?? 'Customer', null,
+        fn($status) => $shopOrder->update(['fulfillment_status' => $status === 'success' ? 'completed' : 'pending']));
+    }
+
+    private function processItems(int $orderId, array $items, string $userName, ?string $userPhone, callable $updateStatus): void
+    {
+        $hasSuccessfulPush = false;
+        $lastRefId = null;
 
         foreach ($items as $item) {
-            Log::info('Processing item', ['name' => $item->name]);
-            
-            $beneficiaryPhone = $item->pivot->beneficiary_number;
-            $variant = \App\Models\ProductVariant::find($item->pivot->product_variant_id);
-            $gig = $variant && isset($variant->variant_attributes['size']) ? (int)filter_var($variant->variant_attributes['size'], FILTER_SANITIZE_NUMBER_INT) : 0;
-            $network = $this->getNetworkFromProduct($item->name);
-            
+            $beneficiaryPhone = $item['beneficiary_number'];
+            $variant  = \App\Models\ProductVariant::find($item['variant_id']);
+            $gig      = $variant && isset($variant->variant_attributes['size'])
+                ? (int) filter_var($variant->variant_attributes['size'], FILTER_SANITIZE_NUMBER_INT)
+                : 0;
+            $network  = $this->getNetworkFromProduct($item['product_name']);
+
             if (empty($beneficiaryPhone) || !$network || !$gig) {
-                Log::warning('Missing required order data', [
-                    'order_id' => $order->id,
-                    'item_id' => $item->id,
-                    'beneficiary' => $beneficiaryPhone,
-                    'network' => $network,
-                    'gig' => $gig
-                ]);
+                Log::warning('Missing required order data', ['order_id' => $orderId, 'beneficiary' => $beneficiaryPhone, 'network' => $network, 'gig' => $gig]);
                 continue;
             }
 
             $referenceId = $this->generateReferenceId();
-            $endpoint = $this->getEndpoint($network);
-            
+            $endpoint    = $this->getEndpoint($network);
+
             $payload = [
-                'agent_api' => $this->apiKey,
+                'agent_api'        => $this->apiKey,
                 'recipient_number' => $this->formatPhone($beneficiaryPhone),
-                'gig' => (string)$gig,
-                'reference_id' => $referenceId,
-                'client_email' => $this->clientEmail
+                'gig'              => (string) $gig,
+                'reference_id'     => $referenceId,
+                'client_email'     => $this->clientEmail,
             ];
-            
+
             if (in_array($network, ['MTN_BIGTIME', 'AT_BIGTIME'])) {
                 $payload['network'] = str_replace('_BIGTIME', '', $network);
             } else {
-                $payload['network'] = $network;
-                $payload['customer_name'] = $order->user->name ?? 'Customer';
-                $payload['customer_tel'] = $order->user->phone ?? $beneficiaryPhone;
+                $payload['network']        = $network;
+                $payload['customer_name']  = $userName;
+                $payload['customer_tel']   = $userPhone ?? $beneficiaryPhone;
             }
-            
+
             Log::info('Sending to CodeCraft API', ['endpoint' => $endpoint, 'payload' => $payload]);
 
             try {
-                $response = Http::timeout(30)->post($endpoint, $payload);
-                
-                $statusCode = $response->status();
+                $response     = Http::timeout(30)->post($endpoint, $payload);
+                $statusCode   = $response->status();
                 $responseData = $response->json();
-                
-                Log::info('CodeCraft API Response', [
-                    'status_code' => $statusCode,
-                    'response' => $responseData,
-                    'reference_id' => $referenceId
-                ]);
+
+                Log::info('CodeCraft API Response', ['order_id' => $orderId, 'status_code' => $statusCode, 'response' => $responseData, 'reference_id' => $referenceId]);
 
                 if ($statusCode == 200) {
-                    $updateData = ['reference_id' => $referenceId];
-                    
-                    if ($network === 'AT') {
-                        $updateData['status'] = 'completed';
-                    }
-                    
-                    $order->update($updateData);
-                    
-                    // Send SMS if Ishare order completed and user has phone
-                    if ($network === 'AT' && $order->user && $order->user->phone) {
-                        $smsService = new MoolreSmsService();
-                        $message = "Your order #{$order->id} for {$order->products->first()->name} to {$item->pivot->beneficiary_number} has been completed. Total: GHS " . number_format($order->total, 2);
-                        $smsService->sendSms($order->user->phone, $message);
-                    }
-                    
+                    $hasSuccessfulPush = true;
+                    $lastRefId = $referenceId;
                     Log::info('Order sent successfully to CodeCraft', ['reference_id' => $referenceId]);
                 } else {
-                    $message = $responseData['message'] ?? 'Unknown error';
-                    Log::error('CodeCraft API Error', [
-                        'status_code' => $statusCode,
-                        'message' => $message,
-                        'reference_id' => $referenceId
-                    ]);
+                    Log::error('CodeCraft API Error', ['order_id' => $orderId, 'status_code' => $statusCode, 'message' => $responseData['message'] ?? 'Unknown error']);
                 }
-
             } catch (\Exception $e) {
-                Log::error('CodeCraft API Exception', [
-                    'message' => $e->getMessage(),
-                    'reference_id' => $referenceId
-                ]);
+                Log::error('CodeCraft API Exception', ['order_id' => $orderId, 'message' => $e->getMessage()]);
             }
         }
+
+        $updateStatus($hasSuccessfulPush ? 'success' : 'failed', $lastRefId);
     }
     
     private function formatPhone($phone)

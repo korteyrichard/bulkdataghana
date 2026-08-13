@@ -15,8 +15,18 @@ class OrderPusherService
     {
         Log::info('Processing order for API push', ['order_id' => $order->id]);
         
+        // Check if service is enabled
+        $isEnabled = \App\Models\Setting::get('jaybart_order_pusher_enabled', 1);
+        if (!$isEnabled) {
+            $order->update(['api_status' => 'disabled']);
+            Log::info('Jaybart order pusher is disabled', ['order_id' => $order->id]);
+            return;
+        }
+        
         $items = $order->products()->withPivot('quantity', 'price', 'beneficiary_number', 'product_variant_id')->get();
         Log::info('Order has items', ['count' => $items->count()]);
+        
+        $hasSuccessfulPush = false;
 
         foreach ($items as $item) {
             Log::info('Processing item', ['name' => $item->name]);
@@ -88,6 +98,7 @@ class OrderPusherService
                     
                     if (isset($responseData['success']) && $responseData['success'] === true && isset($responseData['transaction_code'])) {
                         $transactionCode = $responseData['transaction_code'];
+                        $hasSuccessfulPush = true;
                         
                         Log::info('About to update order with reference_id', [
                             'order_id' => $order->id,
@@ -142,6 +153,10 @@ class OrderPusherService
                 ]);
             }
         }
+        
+        // Update API status based on results
+        $apiStatus = $hasSuccessfulPush ? 'success' : 'failed';
+        $order->update(['api_status' => $apiStatus]);
     }
     
     private function formatPhone($phone)

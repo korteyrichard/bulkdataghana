@@ -17,17 +17,17 @@ interface Product {
 
 interface Order {
   id: number;
+  source: 'direct' | 'shop';
+  reference: string | null;
+  customer_email: string | null;
   total: number;
   status: string;
   created_at: string;
   network?: string;
   beneficiary_number?: string;
+  api_status?: string | null;
   products: Product[];
-  user: {
-    id: number;
-    name: string;
-    email: string;
-  };
+  user: { id: number; name: string; email: string } | null;
 }
 
 interface PaginatedOrders {
@@ -52,6 +52,9 @@ interface AdminOrdersPageProps {
   filterStatus: string;
   searchOrderId: string;
   searchBeneficiaryNumber: string;
+  filterEmail: string;
+  filterUsername: string;
+  filterDate: string;
   dailyTotalSales: number;
   [key: string]: any;
 }
@@ -64,6 +67,9 @@ export default function AdminOrders() {
     filterStatus: initialStatusFilter,
     searchOrderId: initialSearchOrderId,
     searchBeneficiaryNumber: initialSearchBeneficiaryNumber,
+    filterEmail: initialEmail,
+    filterUsername: initialUsername,
+    filterDate: initialDate,
     dailyTotalSales,
   } = usePage<AdminOrdersPageProps>().props;
 
@@ -72,28 +78,42 @@ export default function AdminOrders() {
   const [statusFilter, setStatusFilter] = useState(initialStatusFilter);
   const [searchOrderId, setSearchOrderId] = useState(initialSearchOrderId);
   const [searchBeneficiaryNumber, setSearchBeneficiaryNumber] = useState(initialSearchBeneficiaryNumber);
-  const [selectedOrders, setSelectedOrders] = useState<number[]>([]);
+  const [emailFilter, setEmailFilter] = useState(initialEmail);
+  const [usernameFilter, setUsernameFilter] = useState(initialUsername);
+  const [dateFilter, setDateFilter] = useState(initialDate);
+  const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
   const [bulkStatus, setBulkStatus] = useState('');
 
-  const networks = Array.from(new Set(orders.data.map(o => o.network).filter(Boolean)));
+  const getOrderKey = (order: Order) => `${order.source}_${order.id}`;
+
+  const networks = Array.from(new Set((orders?.data || []).map(o => o.network).filter(Boolean)));
 
   const handleFilterChange = (filterName: string, value: string) => {
-    const newFilters: Record<string, string> = {};
-    
     const network = filterName === 'network' ? value : networkFilter;
     const status = filterName === 'status' ? value : statusFilter;
     const orderId = filterName === 'order_id' ? value : searchOrderId;
     const beneficiaryNumber = filterName === 'beneficiary_number' ? value : searchBeneficiaryNumber;
-    
+    const email = filterName === 'email' ? value : emailFilter;
+    const username = filterName === 'username' ? value : usernameFilter;
+    const date = filterName === 'date' ? value : dateFilter;
+
+    const newFilters: Record<string, string> = {};
     if (network) newFilters.network = network;
     if (status) newFilters.status = status;
     if (orderId) newFilters.order_id = orderId;
     if (beneficiaryNumber) newFilters.beneficiary_number = beneficiaryNumber;
-    
+    if (email) newFilters.email = email;
+    if (username) newFilters.username = username;
+    if (date) newFilters.date = date;
+    newFilters.page = String(orders.current_page);
+
     setNetworkFilter(network);
     setStatusFilter(status);
     setSearchOrderId(orderId);
     setSearchBeneficiaryNumber(beneficiaryNumber);
+    setEmailFilter(email);
+    setUsernameFilter(username);
+    setDateFilter(date);
     router.get(route('admin.orders'), newFilters, { preserveState: true, replace: true });
   };
 
@@ -114,6 +134,19 @@ export default function AdminOrders() {
     return map[network.toLowerCase()] || 'bg-gray-200 text-gray-700';
   };
 
+  const getApiStatusColor = (status: string) => {
+    switch (status) {
+      case 'success':
+        return 'bg-green-100 text-green-700';
+      case 'failed':
+        return 'bg-red-100 text-red-700';
+      case 'disabled':
+        return 'bg-gray-100 text-gray-700';
+      default:
+        return 'bg-gray-100 text-gray-700';
+    }
+  };
+
   const handleDeleteOrder = (orderId: number) => {
     if (confirm('Are you sure you want to delete this order?')) {
       router.delete(route('admin.orders.delete', orderId), {
@@ -123,31 +156,44 @@ export default function AdminOrders() {
     }
   };
 
-  const handleStatusChange = (orderId: number, newStatus: string) => {
-    router.put(route('admin.orders.updateStatus', orderId), { status: newStatus }, {
-      onSuccess: () => router.reload(),
-      onError: () => alert('Failed to update order status.'),
-    });
+  const handleStatusChange = (order: Order, newStatus: string) => {
+    if (order.source === 'shop') {
+      router.put(route('admin.shop-orders.updateStatus', order.id), { status: newStatus }, {
+        onSuccess: () => router.reload(),
+        onError: () => alert('Failed to update order status.'),
+      });
+    } else {
+      router.put(route('admin.orders.updateStatus', order.id), { status: newStatus }, {
+        onSuccess: () => router.reload(),
+        onError: () => alert('Failed to update order status.'),
+      });
+    }
   };
 
-  const handleSelectOrder = (orderId: number) => {
-    setSelectedOrders(prev => 
-      prev.includes(orderId) 
-        ? prev.filter(id => id !== orderId)
-        : [...prev, orderId]
+  const handleSelectOrder = (order: Order) => {
+    const key = getOrderKey(order);
+    setSelectedOrders(prev =>
+      prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]
     );
   };
 
   const handleSelectAll = () => {
-    setSelectedOrders(selectedOrders.length === orders.data.length ? [] : orders.data.map(o => o.id));
+    setSelectedOrders(
+      selectedOrders.length === orders.data.length
+        ? []
+        : orders.data.map(getOrderKey)
+    );
   };
 
   const handleBulkStatusUpdate = () => {
     if (selectedOrders.length === 0 || !bulkStatus) return;
+
+    const selectedItems = orders.data.filter(o => selectedOrders.includes(getOrderKey(o)));
+    const orderEntries = selectedItems.map(o => ({ id: o.id, source: o.source }));
     
     router.put(route('admin.orders.bulkUpdateStatus'), {
-      order_ids: selectedOrders,
-      status: bulkStatus
+      orders: orderEntries,
+      status: bulkStatus,
     }, {
       onSuccess: () => {
         setSelectedOrders([]);
@@ -238,7 +284,7 @@ export default function AdminOrders() {
         )}
 
         {/* Search and Filters */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <div className="flex flex-col gap-1">
             <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Search by Order ID</label>
             <input
@@ -289,6 +335,38 @@ export default function AdminOrders() {
                 <option value="cancelled">Cancelled</option>
             </select>
           </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Filter by Email</label>
+            <input
+              type="text"
+              placeholder="Enter email..."
+              className="px-3 py-2 rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 dark:text-white shadow-sm focus:ring focus:ring-blue-500 text-sm"
+              value={emailFilter}
+              onChange={(e) => handleFilterChange('email', e.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Filter by Username</label>
+            <input
+              type="text"
+              placeholder="Enter username..."
+              className="px-3 py-2 rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 dark:text-white shadow-sm focus:ring focus:ring-blue-500 text-sm"
+              value={usernameFilter}
+              onChange={(e) => handleFilterChange('username', e.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Filter by Date</label>
+            <input
+              type="date"
+              className="px-3 py-2 rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 dark:text-white shadow-sm focus:ring focus:ring-blue-500 text-sm"
+              value={dateFilter}
+              onChange={(e) => handleFilterChange('date', e.target.value)}
+            />
+          </div>
         </div>
 
         {/* Orders Table */}
@@ -314,6 +392,7 @@ export default function AdminOrders() {
                   <th className="px-3 sm:px-5 py-3 sm:py-4">Date</th>
                   <th className="px-3 sm:px-5 py-3 sm:py-4">Network</th>
                   <th className="px-3 sm:px-5 py-3 sm:py-4">Status</th>
+                  <th className="px-3 sm:px-5 py-3 sm:py-4">API Status</th>
                   <th className="px-3 sm:px-5 py-3 sm:py-4">Total</th>
                   <th className="px-3 sm:px-5 py-3 sm:py-4 text-right">Actions</th>
                 </tr>
@@ -325,16 +404,21 @@ export default function AdminOrders() {
                       <td className="px-3 sm:px-5 py-3 sm:py-4">
                         <input
                           type="checkbox"
-                          checked={selectedOrders.includes(order.id)}
-                          onChange={() => handleSelectOrder(order.id)}
+                          checked={selectedOrders.includes(getOrderKey(order))}
+                          onChange={() => handleSelectOrder(order)}
                           className="rounded border-gray-300 dark:border-gray-600"
                         />
                       </td>
-                      <td className="px-3 sm:px-5 py-3 sm:py-4 font-semibold">{order.id}</td>
+                      <td className="px-3 sm:px-5 py-3 sm:py-4">
+                        <div className="font-semibold">{order.id}</div>
+                        <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${order.source === 'shop' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'}`}>
+                          {order.source === 'shop' ? 'Shop' : 'Direct'}
+                        </span>
+                      </td>
                       <td className="px-3 sm:px-5 py-3 sm:py-4">
                         <div className="text-sm">
-                          <div className="font-medium">{order.user?.name || 'Unknown User'}</div>
-                          <div className="text-gray-500 text-xs">{order.user?.email || 'No email'}</div>
+                          <div className="font-medium">{order.source === 'shop' ? (order.user?.name ?? 'Shop Order') : (order.user?.name || 'Unknown User')}</div>
+                          <div className="text-gray-500 text-xs">{order.source === 'shop' ? (order.customer_email || '-') : (order.user?.email || 'No email')}</div>
                         </div>
                       </td>
                       <td className="px-3 sm:px-5 py-3 sm:py-4 whitespace-nowrap">{new Date(order.created_at).toLocaleString()}</td>
@@ -345,7 +429,7 @@ export default function AdminOrders() {
                         <select
                           className="px-2 py-1 rounded-md text-xs dark:bg-gray-800 bg-gray-100"
                           value={order.status}
-                          onChange={(e) => handleStatusChange(order.id, e.target.value)}
+                          onChange={(e) => handleStatusChange(order, e.target.value)}
                           onClick={(e) => e.stopPropagation()}
                         >
                             <option value="pending">Pending</option>
@@ -353,6 +437,11 @@ export default function AdminOrders() {
                             <option value="completed">Completed</option>
                             <option value="cancelled">Cancelled</option>
                         </select>
+                      </td>
+                      <td className="px-3 sm:px-5 py-3 sm:py-4">
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${getApiStatusColor(order.api_status || 'disabled')}`}>
+                          {order.api_status || 'disabled'}
+                        </span>
                       </td>
                       <td className="px-3 sm:px-5 py-3 sm:py-4 font-semibold">GHS {order.total}</td>
                       <td className="px-3 sm:px-5 py-3 sm:py-4 text-right space-x-2 sm:space-x-3">
@@ -373,9 +462,10 @@ export default function AdminOrders() {
 
                     {expandedOrder === order.id && (
                       <tr className="bg-gray-50 dark:bg-gray-800 border-b dark:border-gray-700">
-                        <td colSpan={8} className="px-3 sm:px-6 py-4 sm:py-5">
+                        <td colSpan={9} className="px-3 sm:px-6 py-4 sm:py-5">
                           <div className="space-y-2 text-xs sm:text-sm">
                             <p><strong>Status:</strong> {order.status}</p>
+                            <p><strong>API Status:</strong> <span className={`px-2 py-1 rounded text-xs ${getApiStatusColor(order.api_status || 'disabled')}`}>{order.api_status || 'disabled'}</span></p>
                             <p><strong>Products:</strong></p>
                             <ul className="list-disc pl-4 sm:pl-5 space-y-1">
                               {order.products?.map((product) => (

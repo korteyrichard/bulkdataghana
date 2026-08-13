@@ -7,7 +7,8 @@ interface Transaction {
   id: number;
   type: string;
   amount: number;
-  description: string;
+  balance_before: number | null;
+  balance_after: number | null;
   created_at: string;
 }
 
@@ -115,14 +116,15 @@ export default function Transactions({ auth }: TransactionsPageProps) {
                   <tr>
                     <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-r border-gray-400 dark:border-gray-600">Date</th>
                     <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-r border-gray-400 dark:border-gray-600">Type</th>
-                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-r border-gray-400 dark:border-gray-600">Description</th>
+                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-r border-gray-400 dark:border-gray-600">Bal. Before</th>
+                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-r border-gray-400 dark:border-gray-600">Bal. After</th>
                     <th className="px-6 py-4 text-right text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Amount</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white dark:bg-gray-900 divide-y divide-gray-400 dark:divide-gray-600">
                   {filteredTransactions.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="text-center py-8 text-gray-400 dark:text-gray-500 text-lg">
+                      <td colSpan={5} className="text-center py-8 text-gray-400 dark:text-gray-500 text-lg">
                         No transactions found.
                       </td>
                     </tr>
@@ -137,8 +139,11 @@ export default function Transactions({ auth }: TransactionsPageProps) {
                             {typeLabels[t.type] || t.type}
                           </span>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-gray-600 dark:text-gray-300 border-r border-gray-400 dark:border-gray-600">
-                          {t.description}
+                        <td className="px-6 py-4 whitespace-nowrap text-gray-600 dark:text-gray-300 text-sm border-r border-gray-400 dark:border-gray-600">
+                          {t.balance_before != null ? `GHS ${Number(t.balance_before).toFixed(2)}` : '-'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-gray-600 dark:text-gray-300 text-sm border-r border-gray-400 dark:border-gray-600">
+                          {t.balance_after != null ? `GHS ${Number(t.balance_after).toFixed(2)}` : '-'}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-gray-900 dark:text-gray-100">
                           GHS {t.amount.toLocaleString()}
@@ -174,8 +179,8 @@ export default function Transactions({ auth }: TransactionsPageProps) {
                           <div className="text-xs font-medium text-gray-700 dark:text-gray-200">
                             {new Date(t.created_at).toLocaleDateString()}
                           </div>
-                          <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                            {t.description}
+                          <div className="text-xs text-gray-500 dark:text-gray-400">
+                            {t.balance_before != null ? `GHS ${Number(t.balance_before).toFixed(2)}` : '-'} → {t.balance_after != null ? `GHS ${Number(t.balance_after).toFixed(2)}` : '-'}
                           </div>
                         </td>
                         <td className="px-3 py-3 border-r border-gray-400 dark:border-gray-600">

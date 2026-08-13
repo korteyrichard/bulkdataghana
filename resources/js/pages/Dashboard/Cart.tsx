@@ -105,7 +105,7 @@ export default function Cart() {
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap border-r border-gray-400 dark:border-gray-600">
                             <span className="px-3 py-1 rounded-lg text-sm font-semibold text-cyan-600 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-900/30">
-                              {item.quantity}GB
+                              {item.quantity.toString().toUpperCase().includes('GB') ? item.quantity : `${item.quantity}GB`}
                             </span>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap border-r border-gray-400 dark:border-gray-600">
@@ -161,7 +161,7 @@ export default function Cart() {
                           </td>
                           <td className="px-3 py-3 border-r border-gray-400 dark:border-gray-600">
                             <span className="px-2 py-1 rounded-lg text-xs font-semibold text-cyan-600 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-900/30">
-                              {item.quantity}GB
+                              {item.quantity.toString().toUpperCase().includes('GB') ? item.quantity : `${item.quantity}GB`}
                             </span>
                           </td>
                           <td className="px-3 py-3 text-right border-r border-gray-400 dark:border-gray-600">

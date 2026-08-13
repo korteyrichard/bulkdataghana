@@ -13,6 +13,8 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Schema;
 use App\Services\MoolreSmsService;
+use App\Models\Alert;
+use App\Models\ShopOrder;
 
 class DashboardController extends Controller
 {
@@ -75,6 +77,16 @@ class DashboardController extends Controller
         $processingOrdersCount = Order::where('user_id', $user->id)
             ->whereIn('status', ['processing', 'PROCESSING'])
             ->count();
+
+        // Include shop order stats
+        $shop = $user->shop;
+        if ($shop) {
+            $shopOrdersQuery = ShopOrder::where('shop_id', $shop->id)->where('payment_status', 'paid');
+            $totalSales += (float) $shopOrdersQuery->sum('total_amount');
+            $todaySales += (float) (clone $shopOrdersQuery)->whereDate('created_at', today())->sum('total_amount');
+            $pendingOrdersCount += (clone $shopOrdersQuery)->where('fulfillment_status', 'pending')->count();
+            $processingOrdersCount += (clone $shopOrdersQuery)->where('fulfillment_status', 'processing')->count();
+        }
         
         return Inertia::render('Dashboard/dashboard', [
             'cartCount' => $cartCount,
@@ -86,6 +98,7 @@ class DashboardController extends Controller
             'pendingOrders' => $pendingOrdersCount ?? 0,
             'processingOrders' => $processingOrdersCount ?? 0,
             'products' => $products,
+            'alerts' => Alert::active()->get(),
         ]);
     }
 
@@ -124,11 +137,24 @@ class DashboardController extends Controller
         return response()->json(['success' => true, 'message' => 'Removed from cart']);
     }
 
-    public function transactions()
+    public function transactions(Request $request)
     {
-        $transactions = Transaction::where('user_id', auth()->id())->latest()->get();
+        $user = auth()->user();
+        $transactions = Transaction::where('user_id', $user->id)->latest()->get();
+
+        $todayTopUps = Transaction::where('user_id', $user->id)
+            ->where('type', 'topup')->where('status', 'completed')
+            ->whereDate('created_at', today())->sum('amount');
+
+        $todaySales = Transaction::where('user_id', $user->id)
+            ->where('type', 'order')->where('status', 'completed')
+            ->whereDate('created_at', today())->sum('amount');
+
         return Inertia::render('Dashboard/transactions', [
             'transactions' => $transactions,
+            'todayTopUps'  => $todayTopUps,
+            'todaySales'   => $todaySales,
+            'filterType'   => $request->input('type', 'all'),
         ]);
     }
 
@@ -173,48 +199,75 @@ class DashboardController extends Controller
         ]);
 
         if ($response->successful()) {
-            return response()->json([
-                'success' => true,
-                'payment_url' => $response->json('data.authorization_url')
-            ]);
+            return Inertia::location($response->json('data.authorization_url'));
         }
 
         $transaction->update(['status' => 'failed']);
-        return response()->json(['success' => false, 'message' => 'Payment initialization failed']);
+        return back()->withErrors(['amount' => 'Payment initialization failed']);
     }
 
     public function handleWalletCallback(Request $request)
     {
         $reference = $request->reference;
-        
+
         $response = Http::withHeaders([
             'Authorization' => 'Bearer ' . config('paystack.secret_key'),
         ])->get("https://api.paystack.co/transaction/verify/{$reference}");
 
-        if ($response->successful() && $response->json('data.status') === 'success') {
-            $paymentData = $response->json('data');
-            $metadata = $paymentData['metadata'];
-            
-            $transaction = Transaction::find($metadata['transaction_id']);
-            $user = auth()->user();
-            
-            if ($transaction && $transaction->status === 'pending') {
-                // Get the amount from metadata or transaction record
-                $amount = isset($metadata['actual_amount']) ? $metadata['actual_amount'] : $transaction->amount;
-                
-                // Update wallet balance with the full amount
-                $user->wallet_balance += $amount;
-                $user->save();
-                
-                // Update transaction status
-                $transaction->update(['status' => 'completed']);
-                
-                // Send SMS notification
-                if ($user->phone) {
-                    $smsService = new MoolreSmsService();
-                    $message = "Your wallet has been topped up with GHS " . number_format($amount, 2) . ". New balance: GHS " . number_format($user->wallet_balance, 2);
-                    $smsService->sendSms($user->phone, $message);
-                }
+        if (!$response->successful() || $response->json('data.status') !== 'success') {
+            return redirect()->route('dashboard')->with('error', 'Payment verification failed.');
+        }
+
+        $paymentData = $response->json('data');
+        $metadata = $paymentData['metadata'] ?? [];
+        $transactionId = $metadata['transaction_id'] ?? null;
+
+        if (!$transactionId) {
+            return redirect()->route('dashboard')->with('error', 'Invalid payment metadata.');
+        }
+
+        $credited = \Illuminate\Support\Facades\DB::transaction(function () use ($transactionId, $paymentData, $metadata) {
+            $transaction = Transaction::where('id', $transactionId)
+                ->where('type', 'topup')
+                ->lockForUpdate()
+                ->first();
+
+            if (!$transaction || $transaction->status !== 'pending') {
+                return false;
+            }
+
+            // Validate amount: Paystack amount (kobo) must match stored amount
+            $paystackAmountKobo = $paymentData['amount'] ?? 0;
+            $expectedKobo = (int) round($transaction->amount * 100);
+            if ($paystackAmountKobo !== $expectedKobo) {
+                \Log::warning('Callback amount mismatch', [
+                    'expected_kobo' => $expectedKobo,
+                    'paystack_kobo' => $paystackAmountKobo,
+                    'transaction_id' => $transactionId,
+                ]);
+                return false;
+            }
+
+            $transaction->update(['status' => 'completed']);
+            $userModel = \App\Models\User::where('id', $transaction->user_id)->lockForUpdate()->first();
+            $balanceBefore = $userModel->wallet_balance;
+            $userModel->increment('wallet_balance', $transaction->amount);
+            $transaction->update([
+                'balance_before' => $balanceBefore,
+                'balance_after'  => $balanceBefore + $transaction->amount,
+            ]);
+
+            return $transaction;
+        });
+
+        if ($credited) {
+            $user = auth()->user() ?? \App\Models\User::find($credited->user_id);
+            if ($user && $user->phone) {
+                $amount = $credited->amount;
+                $newBalance = $user->fresh()->wallet_balance;
+                $previousBalance = $newBalance - $amount;
+                $message = "Hello {$user->name}, your wallet top-up of GHS " . number_format($amount, 2) . " has been completed. Previous balance: GHS " . number_format($previousBalance, 2) . ". New balance: GHS " . number_format($newBalance, 2);
+                (new MoolreSmsService())->sendSms($user->phone, $message);
             }
         }
 

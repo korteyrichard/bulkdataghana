@@ -38,6 +38,13 @@ interface CartItem {
   };
 }
 
+interface AlertItem {
+  id: number;
+  title: string;
+  message: string;
+  type: 'info' | 'warning' | 'success' | 'danger';
+}
+
 interface DashboardProps extends PageProps {
   cartCount: number;
   cartItems: CartItem[];
@@ -48,14 +55,18 @@ interface DashboardProps extends PageProps {
   pendingOrders: number;
   processingOrders: number;
   products: Product[];
+  alerts: AlertItem[];
 }
 
 export default function Dashboard({ auth }: DashboardProps) {
-  const { cartCount, cartItems, walletBalance: initialWalletBalance, orders, totalSales, todaySales, pendingOrders, processingOrders, products } = usePage<DashboardProps>().props;
+  const { cartCount, cartItems, walletBalance: initialWalletBalance, orders, totalSales, todaySales, pendingOrders, processingOrders, products, alerts } = usePage<DashboardProps>().props;
 
   const [walletBalance, setWalletBalance] = useState(initialWalletBalance ?? 0);
   const [addAmount, setAddAmount] = useState('');
   const [isAdding, setIsAdding] = useState(false);
+  const [dismissedAlerts, setDismissedAlerts] = useState<number[]>([]);
+
+  const visibleAlerts = (alerts || []).filter(a => !dismissedAlerts.includes(a.id));
 
 
 
@@ -89,6 +100,38 @@ export default function Dashboard({ auth }: DashboardProps) {
       header={<h2 className="font-semibold text-xl text-gray-800 dark:text-gray-200 leading-tight">Dashboard</h2>}
     >
       <Head title="Dashboard" />
+
+      {/* Active Alerts */}
+      {visibleAlerts.length > 0 && (
+        <div className="px-4 sm:px-8 mb-4 space-y-3">
+          {visibleAlerts.map(alert => {
+            const styles = {
+              info: 'bg-blue-50 dark:bg-blue-900/30 border-blue-400 text-blue-800 dark:text-blue-200',
+              warning: 'bg-yellow-50 dark:bg-yellow-900/30 border-yellow-400 text-yellow-800 dark:text-yellow-200',
+              success: 'bg-green-50 dark:bg-green-900/30 border-green-400 text-green-800 dark:text-green-200',
+              danger: 'bg-red-50 dark:bg-red-900/30 border-red-400 text-red-800 dark:text-red-200',
+            }[alert.type];
+            const icons = { info: 'ℹ️', warning: '⚠️', success: '✅', danger: '🚨' };
+            return (
+              <div key={alert.id} className={`border-l-4 rounded-lg p-4 flex items-start justify-between ${styles}`}>
+                <div className="flex items-start space-x-3">
+                  <span className="text-lg">{icons[alert.type]}</span>
+                  <div>
+                    <p className="font-semibold text-sm">{alert.title}</p>
+                    <p className="text-sm mt-1 opacity-90">{alert.message}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setDismissedAlerts(prev => [...prev, alert.id])}
+                  className="ml-4 opacity-60 hover:opacity-100 text-lg leading-none"
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
 
 
@@ -138,31 +181,12 @@ export default function Dashboard({ auth }: DashboardProps) {
                     className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm w-full sm:w-40 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400"
                   />
                   <button 
-                    onClick={async () => {
+                    onClick={() => {
                       if (!addAmount) return;
                       setIsAdding(true);
-                      try {
-                        const response = await fetch('/dashboard/wallet/add', {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'Accept': 'application/json',
-                            'X-Requested-With': 'XMLHttpRequest',
-                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
-                          },
-                          body: JSON.stringify({ amount: addAmount }),
-                        });
-                        const data = await response.json();
-                        if (data.success && data.payment_url) {
-                          window.location.href = data.payment_url;
-                        } else {
-                          alert(data.message || 'Failed to initialize payment.');
-                        }
-                      } catch (err) {
-                        alert('Error initializing payment.');
-                      } finally {
-                        setIsAdding(false);
-                      }
+                      router.post(route('dashboard.wallet.add'), { amount: addAmount }, {
+                        onFinish: () => setIsAdding(false),
+                      });
                     }}
                     disabled={!addAmount || isAdding}
                     className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 w-full sm:w-auto disabled:opacity-50"

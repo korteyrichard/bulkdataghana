@@ -24,8 +24,11 @@ class User extends Authenticatable
         'phone',
         'business_name',
         'password',
-        'wallet_balance', // added wallet_balance to fillable
-        'role', // added role to fillable
+        'wallet_balance',
+        'role',
+        'referral_code',
+        'referred_by',
+        'commission_balance',
     ];
 
     /**
@@ -48,8 +51,9 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
-            'wallet_balance' => 'decimal:2', // cast wallet_balance as decimal
-            'role' => 'string', // cast role as string
+            'wallet_balance' => 'decimal:2',
+            'commission_balance' => 'decimal:2',
+            'role' => 'string',
         ];
     }
 
@@ -67,6 +71,36 @@ class User extends Authenticatable
     {
         return $this->hasMany(AFAOrders::class);
     }
+
+    public function shop()
+    {
+        return $this->hasOne(Shop::class);
+    }
+
+    public function withdrawals()
+    {
+        return $this->hasMany(ShopWithdrawal::class);
+    }
+
+    public function referredUsers()
+    {
+        return $this->hasMany(User::class, 'referred_by');
+    }
+
+    public function referrer()
+    {
+        return $this->belongsTo(User::class, 'referred_by');
+    }
+
+    public function commissionLogs()
+    {
+        return $this->hasMany(CommissionLog::class);
+    }
+
+    public function referralLogs()
+    {
+        return $this->hasMany(ReferralLog::class, 'referrer_id');
+    }
     
     /**
      * Get the default role for the user.
@@ -76,9 +110,12 @@ class User extends Authenticatable
     protected static function boot()
     {
         parent::boot();
-    
+
         static::creating(function ($user) {
             $user->role = $user->role ?? 'customer';
+            if (empty($user->referral_code)) {
+                $user->referral_code = strtoupper(\Illuminate\Support\Str::random(8));
+            }
         });
     }
 

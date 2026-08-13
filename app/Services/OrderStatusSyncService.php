@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Order;
+use App\Services\MoolreSmsService;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -10,6 +11,12 @@ class OrderStatusSyncService
 {
     private $codeCraftAgentEmail = 'obengcollins3034@gmail.com';
     private $mtnApiKey = '8c65e6a8156bcf6993a1f6f3ceef9433af8708fb';
+    private $smsService;
+
+    public function __construct(MoolreSmsService $smsService)
+    {
+        $this->smsService = $smsService;
+    }
 
     public function syncOrderStatuses()
     {
@@ -89,6 +96,14 @@ class OrderStatusSyncService
                         'newStatus' => $newStatus,
                         'update_successful' => $updateResult
                     ]);
+                    
+                    if ($newStatus === 'completed') {
+                        // Load products with pivot data for SMS
+                        $order->load(['products' => function($query) {
+                            $query->withPivot('quantity', 'price', 'beneficiary_number', 'product_variant_id');
+                        }]);
+                        $this->sendCompletionSms($order);
+                    }
                 } else {
                     Log::info('MTN order status unchanged', [
                         'order_id' => $order->id,
@@ -201,6 +216,14 @@ class OrderStatusSyncService
                         'newStatus' => $newStatus,
                         'update_successful' => $updateResult
                     ]);
+                    
+                    if ($newStatus === 'completed') {
+                        // Load products with pivot data for SMS
+                        $order->load(['products' => function($query) {
+                            $query->withPivot('quantity', 'price', 'beneficiary_number', 'product_variant_id');
+                        }]);
+                        $this->sendCompletionSms($order);
+                    }
                 } else {
                     Log::info('CodeCraft order status unchanged', [
                         'order_id' => $order->id,
@@ -274,5 +297,40 @@ class OrderStatusSyncService
         ]);
 
         return $mappedStatus;
+    }
+
+    private function sendCompletionSms($order)
+    {
+        try {
+            $user = $order->user;
+            
+            foreach ($order->products as $product) {
+                $size = 'N/A';
+                if ($product->pivot->product_variant_id) {
+                    $variant = \App\Models\ProductVariant::find($product->pivot->product_variant_id);
+                    if ($variant && isset($variant->variant_attributes['size'])) {
+                        $size = strtoupper($variant->variant_attributes['size']);
+                    }
+                }
+                
+                $beneficiaryNumber = $product->pivot->beneficiary_number;
+                
+                // Send SMS to beneficiary
+                if ($beneficiaryNumber) {
+                    $beneficiaryMessage = "Your Account has been credited with {$size}";
+                    $this->smsService->sendSms($beneficiaryNumber, $beneficiaryMessage);
+                    Log::info('Beneficiary completion SMS sent', ['order_id' => $order->id, 'phone' => $beneficiaryNumber]);
+                }
+                
+                // Send SMS to user
+                if ($user && $user->phone) {
+                    $userMessage = "{$size} has been sent to {$beneficiaryNumber}";
+                    $this->smsService->sendSms($user->phone, $userMessage);
+                    Log::info('User completion SMS sent', ['order_id' => $order->id, 'phone' => $user->phone]);
+                }
+            }
+        } catch (\Exception $e) {
+            Log::error('Failed to send completion SMS', ['order_id' => $order->id, 'error' => $e->getMessage()]);
+        }
     }
 }

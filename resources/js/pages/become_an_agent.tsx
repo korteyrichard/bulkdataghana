@@ -1,10 +1,14 @@
-import { Head, useForm, Link } from '@inertiajs/react';
+import { Head, useForm, Link, usePage } from '@inertiajs/react';
 import { Button } from '@/components/ui/button';
+import { PageProps } from '@/types';
+
+interface BecomeAnAgentProps extends PageProps {
+    agent_registration_fee: number;
+}
 
 export default function BecomeAnAgent() {
-    const { data, setData, post, processing, errors } = useForm({
-        amount: 50
-    });
+    const { agent_registration_fee } = usePage<BecomeAnAgentProps>().props;
+    const { post, processing, errors } = useForm({});
 
     const handleBecomeAgent = (e: React.FormEvent) => {
         e.preventDefault();
@@ -31,7 +35,7 @@ export default function BecomeAnAgent() {
                             className="w-full bg-slate-800 hover:bg-slate-700 text-white py-3 rounded-md font-medium transition-colors" 
                             disabled={processing}
                         >
-                            {processing ? 'Processing...' : 'Pay GHS 50.00 to Become An Agent'}
+                            {processing ? 'Processing...' : `Pay GHS ${agent_registration_fee.toFixed(2)} to Become An Agent`}
                         </Button>
                         {errors.message && <div className="text-red-500 text-xs mt-1">{errors.message}</div>}
                     </form>

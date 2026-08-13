@@ -18,7 +18,7 @@ interface User {
 interface AFAOrder {
   id: number;
   full_name: string;
-  email: string;
+  ghana_card_number: string;
   phone: string;
   dob?: string;
   occupation?: string;
@@ -121,10 +121,10 @@ export default function AFAOrders() {
                             </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                            {order.afaproduct.name}
+                          {order.afaproduct?.name ?? 'N/A'}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                            GHS {order.afaproduct.price}
+                            GHS {order.afaproduct?.price ?? 'N/A'}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <select
@@ -161,8 +161,8 @@ export default function AFAOrders() {
                                   <p className="text-gray-900 dark:text-gray-100">{order.full_name}</p>
                                 </div>
                                 <div>
-                                  <strong className="text-gray-700 dark:text-gray-300">Email:</strong>
-                                  <p className="text-gray-900 dark:text-gray-100">{order.email}</p>
+                                  <strong className="text-gray-700 dark:text-gray-300">Ghana Card Number:</strong>
+                                  <p className="text-gray-900 dark:text-gray-100">{order.ghana_card_number}</p>
                                 </div>
                                 <div>
                                   <strong className="text-gray-700 dark:text-gray-300">Phone:</strong>

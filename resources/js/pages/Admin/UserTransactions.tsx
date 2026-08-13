@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useMemo } from "react";
 import { AdminLayout } from "../../layouts/admin-layout";
 import { Button } from "@/components/ui/button";
 import { PageProps, User, Transaction } from '@/types';
@@ -10,7 +10,26 @@ interface UserTransactionsPageProps extends PageProps {
   transactions: Transaction[];
 }
 
+const TRANSACTION_TYPES = [
+  { value: 'topup',         label: 'Wallet Top Up' },
+  { value: 'wallet_credit', label: 'Wallet Credit' },
+  { value: 'wallet_debit',  label: 'Wallet Debit' },
+  { value: 'order',         label: 'Order Purchase' },
+  { value: 'agent_fee',     label: 'Agent Fee' },
+  { value: 'refund',        label: 'Refund' },
+];
+
 const UserTransactionsPage = ({ auth, user, transactions }: UserTransactionsPageProps) => {
+  const [typeFilter, setTypeFilter] = useState('');
+  const [dateFilter, setDateFilter] = useState('');
+
+  const filtered = useMemo(() => {
+    return transactions.filter(t => {
+      if (typeFilter && t.type !== typeFilter) return false;
+      if (dateFilter && !t.created_at.startsWith(dateFilter)) return false;
+      return true;
+    });
+  }, [transactions, typeFilter, dateFilter]);
   const getStatusBadge = (status: string) => {
     const statusClasses = {
       completed: "bg-green-100 text-green-800",
@@ -94,7 +113,7 @@ const UserTransactionsPage = ({ auth, user, transactions }: UserTransactionsPage
               <FileText className="w-4 h-4 text-white" />
             </div>
           </div>
-          <p className="text-2xl font-bold text-white">{transactions.length}</p>
+          <p className="text-2xl font-bold text-white">{filtered.length}</p>
         </div>
         
         <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 border border-white/20">
@@ -105,7 +124,7 @@ const UserTransactionsPage = ({ auth, user, transactions }: UserTransactionsPage
             </div>
           </div>
           <p className="text-2xl font-bold text-white">
-            ₵{transactions.reduce((sum, t) => sum + parseFloat(t.amount), 0).toFixed(2)}
+            ₵{filtered.reduce((sum, t) => sum + parseFloat(t.amount), 0).toFixed(2)}
           </p>
         </div>
         
@@ -117,9 +136,45 @@ const UserTransactionsPage = ({ auth, user, transactions }: UserTransactionsPage
             </div>
           </div>
           <p className="text-2xl font-bold text-white">
-            ₵{transactions.filter(t => t.status === 'completed').reduce((sum, t) => sum + parseFloat(t.amount), 0).toFixed(2)}
+            ₵{filtered.filter(t => t.status === 'completed').reduce((sum, t) => sum + parseFloat(t.amount), 0).toFixed(2)}
           </p>
         </div>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap gap-4 mb-6">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Filter by Type</label>
+          <select
+            value={typeFilter}
+            onChange={e => setTypeFilter(e.target.value)}
+            className="px-3 py-2 rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 dark:text-white text-sm shadow-sm focus:ring focus:ring-blue-500"
+          >
+            <option value="">-- All Types --</option>
+            {TRANSACTION_TYPES.map(t => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Filter by Date</label>
+          <input
+            type="date"
+            value={dateFilter}
+            onChange={e => setDateFilter(e.target.value)}
+            className="px-3 py-2 rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 dark:text-white text-sm shadow-sm focus:ring focus:ring-blue-500"
+          />
+        </div>
+        {(typeFilter || dateFilter) && (
+          <div className="flex flex-col justify-end">
+            <button
+              onClick={() => { setTypeFilter(''); setDateFilter(''); }}
+              className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm rounded-xl hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+            >
+              Clear
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Transactions Table */}
@@ -128,7 +183,7 @@ const UserTransactionsPage = ({ auth, user, transactions }: UserTransactionsPage
           <h3 className="text-lg font-medium text-gray-900">Transaction History</h3>
         </div>
         
-        {transactions.length > 0 ? (
+        {filtered.length > 0 ? (
           <>
             {/* Desktop Table */}
             <div className="hidden md:block overflow-x-auto">
@@ -140,12 +195,14 @@ const UserTransactionsPage = ({ auth, user, transactions }: UserTransactionsPage
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Description</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Paystack Ref</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Balance Before</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Balance After</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {transactions.map((transaction) => (
+                  {filtered.map((transaction) => (
                     <tr key={transaction.id}>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {new Date(transaction.created_at).toLocaleDateString()}
@@ -166,6 +223,12 @@ const UserTransactionsPage = ({ auth, user, transactions }: UserTransactionsPage
                           <span className="text-gray-400">-</span>
                         )}
                       </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {transaction.balance_before != null ? `₵${Number(transaction.balance_before).toFixed(2)}` : '-'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {transaction.balance_after != null ? `₵${Number(transaction.balance_after).toFixed(2)}` : '-'}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                         ₵{parseFloat(transaction.amount).toFixed(2)}
                       </td>
@@ -180,7 +243,7 @@ const UserTransactionsPage = ({ auth, user, transactions }: UserTransactionsPage
 
             {/* Mobile Cards */}
             <div className="md:hidden divide-y divide-gray-200">
-              {transactions.map((transaction) => (
+              {filtered.map((transaction) => (
                 <div key={transaction.id} className="p-4">
                   <div className="flex justify-between items-start mb-2">
                     <div className="flex flex-col">
@@ -197,6 +260,12 @@ const UserTransactionsPage = ({ auth, user, transactions }: UserTransactionsPage
                     </p>
                   </div>
                   <p className="text-sm text-gray-900">{transaction.description}</p>
+                  {transaction.balance_before != null && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      <span className="font-semibold">Balance Before:</span> ₵{Number(transaction.balance_before).toFixed(2)}
+                      {transaction.balance_after != null && <> → <span className="font-semibold">After:</span> ₵{Number(transaction.balance_after).toFixed(2)}</>}
+                    </p>
+                  )}
                   {transaction.reference && (
                     <p className="text-xs text-gray-500 mt-1">
                       <span className="font-semibold">Paystack Ref:</span> <span className="font-mono">{transaction.reference}</span>

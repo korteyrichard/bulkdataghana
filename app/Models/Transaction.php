@@ -7,7 +7,7 @@ use Carbon\Carbon;
 
 class Transaction extends Model
 {
-    protected $fillable = ['order_id', 'user_id', 'amount', 'status', 'type', 'description', 'reference'];
+    protected $fillable = ['order_id', 'user_id', 'amount', 'status', 'type', 'description', 'reference', 'balance_before', 'balance_after'];
     
     protected $casts = [
         'created_at' => 'datetime:Y-m-d H:i:s',

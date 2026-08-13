@@ -10,6 +10,7 @@ interface Transaction {
   status: string;
   type: string;
   description: string;
+  reference: string;
   created_at: string;
 }
 
@@ -46,6 +47,7 @@ export default function Wallet({ auth, transactions }: WalletPageProps) {
       const [addAmount, setAddAmount] = useState('');
       const [isAdding, setIsAdding] = useState(false);
       const [addError, setAddError] = useState<string | null>(null);
+      const [verifyingTransactions, setVerifyingTransactions] = useState<Set<number>>(new Set());
 
 
 
@@ -53,6 +55,21 @@ export default function Wallet({ auth, transactions }: WalletPageProps) {
 
   const handleTopUp = () => {
     router.visit('/dashboard/wallet/add');
+  };
+
+  const handleVerifyPayment = (transactionId: number, reference: string) => {
+    setVerifyingTransactions(prev => new Set(prev).add(transactionId));
+
+    router.post('/dashboard/wallet/verify', { reference }, {
+      preserveScroll: true,
+      onSuccess: () => router.reload(),
+      onError: (errors) => alert(Object.values(errors)[0] || 'Verification failed'),
+      onFinish: () => setVerifyingTransactions(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(transactionId);
+        return newSet;
+      }),
+    });
   };
 
   const user = auth.user;
@@ -81,33 +98,15 @@ export default function Wallet({ auth, transactions }: WalletPageProps) {
             <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-gray-100">Add to Wallet</h3>
             <form
               className="flex flex-col gap-3"
-              onSubmit={async (e) => {
+              onSubmit={(e) => {
                 e.preventDefault();
                 setIsAdding(true);
                 setAddError(null);
-                try {
-                  const response = await fetch('/dashboard/wallet/add', {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      'Accept': 'application/json',
-                      'X-Requested-With': 'XMLHttpRequest',
-                      'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
-                    },
-                    body: JSON.stringify({ amount: addAmount }),
-                  });
-                  const data = await response.json();
-                  if (data.success && data.payment_url) {
-                    // Redirect to Paystack payment page
-                    window.location.href = data.payment_url;
-                  } else {
-                    setAddError(data.message || 'Failed to initialize payment.');
-                  }
-                } catch (err) {
-                  setAddError('Error initializing payment.');
-                } finally {
-                  setIsAdding(false);
-                }
+                router.post('/dashboard/wallet/add', { amount: addAmount }, {
+                  preserveScroll: true,
+                  onError: (errors) => setAddError(Object.values(errors)[0] || 'Failed to initialize payment.'),
+                  onFinish: () => setIsAdding(false),
+                });
               }}
             >
               <input
@@ -170,13 +169,14 @@ export default function Wallet({ auth, transactions }: WalletPageProps) {
                   <th className="p-3 border whitespace-nowrap">Amount</th>
                   <th className="p-3 border whitespace-nowrap">Status</th>
                   <th className="p-3 border whitespace-nowrap">Date</th>
+                  <th className="p-3 border whitespace-nowrap">Action</th>
                 </tr>
               </thead>
               <tbody>
                 {transactions.data.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={5}
+                      colSpan={6}
                       className="p-4 text-center text-gray-500 dark:text-gray-400"
                     >
                       No wallet transactions found.
@@ -224,6 +224,19 @@ export default function Wallet({ auth, transactions }: WalletPageProps) {
                         </td>
                         <td className="p-3 border">
                           {new Date(tx.created_at).toLocaleString()}
+                        </td>
+                        <td className="p-3 border">
+                          {tx.status === 'pending' ? (
+                            <button
+                              onClick={() => handleVerifyPayment(tx.id, tx.reference)}
+                              disabled={verifyingTransactions.has(tx.id)}
+                              className="bg-green-600 text-white px-3 py-1 rounded text-xs hover:bg-green-700 disabled:opacity-50"
+                            >
+                              {verifyingTransactions.has(tx.id) ? 'Verifying...' : 'Verify'}
+                            </button>
+                          ) : (
+                            <span className="text-gray-400 text-xs">-</span>
+                          )}
                         </td>
                       </tr>
                     );

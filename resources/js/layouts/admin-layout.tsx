@@ -37,6 +37,11 @@ const adminNavigation: NavigationItem[] = [
   { name: "Orders", href: route("admin.orders"), icon: "Package", current: route().current("admin.orders") },
   { name: "AFA Orders", href: route("admin.afa-orders"), icon: "FileText", current: route().current("admin.afa-orders") },
   { name: "Transactions", href: route("admin.transactions"), icon: "Receipt", current: route().current("admin.transactions") },
+  { name: "Shops", href: route("admin.shops"), icon: "Store", current: route().current("admin.shops") },
+  { name: "Shop Withdrawals", href: route("admin.shop-withdrawals"), icon: "Banknote", current: route().current("admin.shop-withdrawals") },
+  { name: "Alerts", href: route("admin.alerts"), icon: "Bell", current: route().current("admin.alerts") },
+  { name: "Result Checkers", href: route("admin.result-checker-products.index"), icon: "ClipboardList", current: route().current("admin.result-checker-products.*") || route().current("admin.result-checker-vouchers.*") },
+  { name: "RC Orders", href: route("admin.result-checker-orders.index"), icon: "ShoppingCart", current: route().current("admin.result-checker-orders.*") },
   { name: "Settings", href: route("profile.edit"), icon: "Settings", current: route().current("profile.edit") || route().current("password.edit") || route().current("appearance") },
 ];
 
@@ -50,12 +55,12 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, user, header
       <Link
         key={item.name}
         href={item.href}
-        className={`flex h-9 w-9 items-center justify-center rounded-lg ${
+        className={`flex items-center gap-3 rounded-lg px-3 py-2 w-full ${
           item.current ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground"
-        } transition-colors md:h-8 md:w-8`}
+        } transition-colors`}
       >
-        <Icon name={item.icon} className="h-5 w-5" />
-        <span className="sr-only">{item.name}</span>
+        <Icon name={item.icon} className="h-5 w-5 shrink-0" />
+        <span className="text-sm">{item.name}</span>
       </Link>
     ));
 
@@ -76,14 +81,14 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, user, header
   return (
     <div className="flex min-h-screen w-full flex-col bg-muted/40">
       {/* Sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-10 hidden w-14 flex-col border-r bg-background sm:flex">
-        <nav className="flex flex-col items-center gap-4 px-2 sm:py-5">
+      <aside className="fixed inset-y-0 left-0 z-10 hidden w-52 flex-col border-r bg-background sm:flex overflow-y-auto">
+        <nav className="flex flex-col gap-1 px-2 sm:py-5">
           {renderNavigationItems()}
         </nav>
       </aside>
 
       {/* Main Content */}
-      <div className="flex flex-col sm:gap-4 sm:py-4 sm:pl-14">
+      <div className="flex flex-col sm:gap-4 sm:py-4 sm:pl-52">
         {/* Toast notifications */}
         <Toaster />
         
